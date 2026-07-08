@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+logs/
+banco/
+entrada/
+saida/
+*.sqlite
+*.db
+*.log
+.venv/
+venv/
+.idea/
+.vscode/
