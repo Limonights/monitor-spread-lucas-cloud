@@ -27,6 +27,23 @@ EXPECTED_SHEETS = {
 USUARIO_NOME = "Lucas"
 USUARIO_AREA = "Crédito Privado"
 
+# Colunas solicitadas para não aparecerem nas tabelas do site.
+# A normalização permite ocultar mesmo se vier com maiúsculas, acentos ou espaços.
+COLUNAS_OCULTAR_SITE = [
+    "grupo_economico",
+    "subsetor",
+    "rating",
+    "agencia",
+    "data_rating",
+    "fonte_rating",
+    "intervalo_indicativo_minimo",
+    "intervalo_indicativo_maximo",
+    "pct_vne",
+    "referencia_ntnb",
+    "spread_incentivados_sem_gross_up",
+    "vna",
+]
+
 
 # =============================================================================
 # CONFIG STREAMLIT
@@ -372,6 +389,27 @@ def leitura_do_dia(df_dashboard, df_alertas):
     return texto
 
 
+
+def ocultar_colunas_site(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove colunas que não devem aparecer nas tabelas do site."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    colunas_ocultas_normalizadas = {normalize_text(col) for col in COLUNAS_OCULTAR_SITE}
+
+    colunas_para_remover = [
+        col for col in out.columns
+        if normalize_text(col) in colunas_ocultas_normalizadas
+    ]
+
+    if colunas_para_remover:
+        out = out.drop(columns=colunas_para_remover, errors="ignore")
+
+    return out
+
+
+
 def render_sidebar():
     with st.sidebar:
         st.markdown(
@@ -439,10 +477,13 @@ def render_topbar(data_ref, arquivo_disponivel=True):
 
 
 def render_table(df: pd.DataFrame, height=620):
-    if df.empty:
+    df_view = ocultar_colunas_site(df)
+
+    if df_view.empty:
         st.warning("Sem dados para exibir.")
         return
-    st.dataframe(df, use_container_width=True, hide_index=True, height=height)
+
+    st.dataframe(df_view, use_container_width=True, hide_index=True, height=height)
 
 
 def main():
@@ -604,7 +645,7 @@ def main():
                 st.dataframe(df_card_alertas, use_container_width=True, hide_index=True, height=279, column_config=config)
 
         st.markdown(f'<div class="summary-text"><b>Leitura automática do dia:</b> {leitura_do_dia(df_dashboard, df_alertas_filtrado)}</div>', unsafe_allow_html=True)
-        df_tabela = preparar_tabela_principal(df_alertas_filtrado)
+        df_tabela = ocultar_colunas_site(preparar_tabela_principal(df_alertas_filtrado))
         if not df_tabela.empty:
             column_config = {}
             for col in ["Variação (bps)", "Taxa D-1", "Taxa Atual", "Duration", "Z-score"]:
@@ -673,11 +714,11 @@ def main():
     elif pagina == "Alertas":
         st.markdown('<div class="panel-header"><div class="panel-title">Alertas</div></div>', unsafe_allow_html=True)
         render_table(df_alertas_filtrado)
-        st.download_button("Baixar alertas em CSV", data=make_csv(df_alertas_filtrado), file_name="alertas_monitor_spread_lucas.csv", mime="text/csv")
+        st.download_button("Baixar alertas em CSV", data=make_csv(ocultar_colunas_site(df_alertas_filtrado)), file_name="alertas_monitor_spread_lucas.csv", mime="text/csv")
     elif pagina == "Histórico":
         st.markdown('<div class="panel-header"><div class="panel-title">Histórico Completo</div></div>', unsafe_allow_html=True)
         render_table(df_historico_filtrado)
-        st.download_button("Baixar histórico em CSV", data=make_csv(df_historico_filtrado), file_name="historico_monitor_spread_lucas.csv", mime="text/csv")
+        st.download_button("Baixar histórico em CSV", data=make_csv(ocultar_colunas_site(df_historico_filtrado)), file_name="historico_monitor_spread_lucas.csv", mime="text/csv")
     elif pagina == "Setores":
         st.markdown('<div class="panel-header"><div class="panel-title">Setores</div></div>', unsafe_allow_html=True)
         setor_col = first_existing_column(df_alertas, ["setor"])
