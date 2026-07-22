@@ -24,7 +24,7 @@ EXPECTED_SHEETS = {
     "log_consultas": pd.DataFrame(),
 }
 
-USUARIO_NOME = "Lucas"
+USUARIO_NOME = "Lemuel"
 USUARIO_AREA = "Crédito Privado"
 
 # Colunas solicitadas para não aparecerem nas tabelas do site.
