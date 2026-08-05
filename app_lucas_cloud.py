@@ -123,11 +123,21 @@ input { border-radius: 12px !important; }
 [data-testid="stMultiSelect"] [data-baseweb="tag"] { background-color: #063b82 !important; color: white !important; border-radius: 6px !important; max-width: 130px !important; }
 .spacer-after-kpi { height: 22px; }
 .footer-note { color: #667085; font-size: 11px; margin-top: 10px; }
-header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
+header[data-testid="stHeader"] { background: rgba(255,255,255,0) !important; }
+[data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stSidebarCollapsedControl"] { display: flex !important; visibility: visible !important; opacity: 1 !important; z-index: 999999 !important; }
 #MainMenu { visibility: hidden !important; }
 footer { visibility: hidden !important; }
 .stDeployButton { display: none !important; }
 [data-testid="stAppViewContainer"] { padding-top: 0rem !important; }
+
+/* ajustes de espaçamento e overflow dos gráficos */
+[data-testid="stPlotlyChart"] { overflow: visible !important; }
+[data-testid="stPlotlyChart"] > div { overflow: visible !important; }
+div[data-testid="stVerticalBlock"] { gap: 0.82rem !important; }
+.element-container { margin-bottom: 0.10rem !important; }
+.bottom-section-spacer { height: 12px; }
+
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -486,6 +496,125 @@ def render_table(df: pd.DataFrame, height=620):
     st.dataframe(df_view, use_container_width=True, hide_index=True, height=height)
 
 
+
+def dataframe_interativo(df: pd.DataFrame, key: str, height=280, column_config=None):
+    df_view = ocultar_colunas_site(df)
+
+    if df_view.empty:
+        st.warning("Sem dados para exibir.")
+        return None
+
+    try:
+        evento = st.dataframe(
+            df_view,
+            use_container_width=True,
+            hide_index=True,
+            height=height,
+            column_config=column_config or {},
+            on_select="rerun",
+            selection_mode="single-row",
+            key=key,
+        )
+
+        linhas = getattr(evento, "selection", {}).get("rows", [])
+
+        if linhas:
+            idx = linhas[0]
+            if 0 <= idx < len(df_view):
+                return df_view.iloc[idx].to_dict()
+
+    except TypeError:
+        st.dataframe(
+            df_view,
+            use_container_width=True,
+            hide_index=True,
+            height=height,
+            column_config=column_config or {},
+        )
+
+    return None
+
+
+def extrair_ativo_linha(linha):
+    if not linha:
+        return None
+
+    for col in ["Ativo", "codigo_ativo", "ativo", "Código", "Ticker"]:
+        if col in linha and str(linha[col]).strip():
+            return str(linha[col]).strip().upper()
+
+    return None
+
+
+def render_grafico_ativo_selecionado(df_historico_base: pd.DataFrame, ativo: str):
+    if not ativo or df_historico_base is None or df_historico_base.empty:
+        return
+
+    cod_col = first_existing_column(df_historico_base, ["codigo_ativo", "ativo", "codigo", "ticker"])
+    date_col = first_existing_column(df_historico_base, ["data_ref", "data", "data_referencia", "dt_referencia"])
+    taxa_col = first_existing_column(df_historico_base, ["taxa_indicativa", "spread", "spread_atual", "valor"])
+
+    if not cod_col or not date_col or not taxa_col:
+        return
+
+    df_plot = df_historico_base[
+        df_historico_base[cod_col].astype(str).str.upper().str.strip() == str(ativo).upper().strip()
+    ].copy()
+
+    if df_plot.empty:
+        st.info(f"Sem histórico para {ativo}.")
+        return
+
+    df_plot[date_col] = pd.to_datetime(df_plot[date_col], errors="coerce")
+    df_plot[taxa_col] = pd.to_numeric(df_plot[taxa_col], errors="coerce")
+    df_plot = df_plot.dropna(subset=[date_col, taxa_col]).sort_values(date_col)
+
+    if df_plot.empty:
+        st.info(f"Sem dados válidos para {ativo}.")
+        return
+
+    st.markdown(
+        f'<div class="panel-header"><div class="panel-title">Histórico do ativo selecionado: {ativo}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    hover_cols = [
+        c for c in [
+            first_existing_column(df_plot, ["emissor", "emissor_anbima"]),
+            first_existing_column(df_plot, ["pu"]),
+            first_existing_column(df_plot, ["duration"]),
+            first_existing_column(df_plot, ["variacao_dia_bps"]),
+            first_existing_column(df_plot, ["status_alerta"]),
+        ]
+        if c
+    ]
+
+    fig = px.line(
+        df_plot,
+        x=date_col,
+        y=taxa_col,
+        markers=False,
+        labels={date_col: "", taxa_col: "", cod_col: ""},
+        hover_data=hover_cols,
+    )
+
+    fig.update_traces(line=dict(width=2.8), name=ativo)
+    fig = plotly_base(fig, height=260, showlegend=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def obter_setor_clicado(evento):
+    try:
+        pontos = evento.selection.get("points", [])
+        if pontos:
+            ponto = pontos[0]
+            return ponto.get("y") or ponto.get("label") or ponto.get("x")
+    except Exception:
+        return None
+
+    return None
+
+
 def main():
     pagina = render_sidebar()
     if not DATA_FILE.exists():
@@ -626,7 +755,7 @@ def main():
                 if df_top_ab.empty:
                     st.warning("Sem aberturas.")
                 else:
-                    fig_ab = px.bar(df_top_ab, x=var_col, y=cod_col_alerta, orientation="h", text=var_col, labels={var_col: "", cod_col_alerta: ""})
+                    fig_ab = px.bar(df_top_ab, x=var_col, y=cod_col_alerta, orientation="h", text=var_col, labels={var_col: "Variação diária (bps)", cod_col_alerta: ""})
                     fig_ab.update_traces(marker_color="#063b82", texttemplate="+%{text:.0f}", textposition="outside")
                     fig_ab.update_layout(yaxis=dict(autorange="reversed"))
                     fig_ab = plotly_base(fig_ab, height=315, showlegend=False)
@@ -653,24 +782,97 @@ def main():
                     column_config[col] = st.column_config.NumberColumn(format="%.2f")
             if "Percentil" in df_tabela.columns:
                 column_config["Percentil"] = st.column_config.NumberColumn(format="%.1f%%")
-            st.dataframe(df_tabela, use_container_width=True, hide_index=True, height=280, column_config=column_config)
+            linha_selecionada = dataframe_interativo(
+                df_tabela,
+                key="tabela_principal_dashboard",
+                height=280,
+                column_config=column_config,
+            )
+
+            ativo_clicado = extrair_ativo_linha(linha_selecionada)
+
+            if ativo_clicado:
+                render_grafico_ativo_selecionado(df_historico, ativo_clicado)
         else:
             st.warning("Sem dados para tabela principal.")
 
         b1, b2, b3 = st.columns([1.1, 1.1, 1.7])
         with b1:
-            st.markdown('<div class="panel-header"><div class="panel-title">Análise por Setor</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel-header"><div class="panel-title">Análise por Setor</div><div class="panel-link">Clique no setor</div></div>', unsafe_allow_html=True)
             setor_col = first_existing_column(df_alertas_filtrado, ["setor"])
             taxa_col = first_existing_column(df_alertas_filtrado, ["taxa_indicativa", "spread", "spread_atual"])
+            var_col_setor = first_existing_column(df_alertas_filtrado, ["variacao_dia_bps", "variacao", "delta_spread"])
+            cod_col_setor = first_existing_column(df_alertas_filtrado, ["codigo_ativo", "ativo", "codigo", "ticker"])
+
             if not df_alertas_filtrado.empty and setor_col and taxa_col and df_alertas_filtrado[setor_col].notna().any():
                 df_setor = df_alertas_filtrado.copy()
                 df_setor[taxa_col] = pd.to_numeric(df_setor[taxa_col], errors="coerce")
-                df_setor = df_setor.groupby(setor_col, as_index=False).agg(spread_medio=(taxa_col, "mean")).sort_values("spread_medio", ascending=False).head(7)
-                fig_setor = px.bar(df_setor, x="spread_medio", y=setor_col, orientation="h", text="spread_medio", labels={"spread_medio": "", setor_col: ""})
+
+                df_setor_resumo = (
+                    df_setor
+                    .groupby(setor_col, as_index=False)
+                    .agg(spread_medio=(taxa_col, "mean"))
+                    .sort_values("spread_medio", ascending=False)
+                    .head(7)
+                )
+
+                fig_setor = px.bar(
+                    df_setor_resumo,
+                    x="spread_medio",
+                    y=setor_col,
+                    orientation="h",
+                    text="spread_medio",
+                    labels={"spread_medio": "Taxa média", setor_col: ""},
+                )
                 fig_setor.update_traces(marker_color="#063b82", texttemplate="%{text:.2f}", textposition="outside")
-                fig_setor.update_layout(yaxis=dict(autorange="reversed"))
-                fig_setor = plotly_base(fig_setor, height=248, showlegend=False)
-                st.plotly_chart(fig_setor, use_container_width=True)
+                fig_setor.update_layout(yaxis=dict(autorange="reversed"), margin=dict(l=6, r=36, t=8, b=22))
+                fig_setor = plotly_base(fig_setor, height=250, showlegend=False)
+
+                try:
+                    evento_setor = st.plotly_chart(
+                        fig_setor,
+                        use_container_width=True,
+                        key="grafico_setor_interativo",
+                        on_select="rerun",
+                        selection_mode="points",
+                    )
+                    setor_clicado = obter_setor_clicado(evento_setor)
+                except TypeError:
+                    st.plotly_chart(fig_setor, use_container_width=True)
+                    setor_clicado = None
+
+                if setor_clicado and cod_col_setor:
+                    df_ativos_setor = df_alertas_filtrado[
+                        df_alertas_filtrado[setor_col].astype(str) == str(setor_clicado)
+                    ].copy()
+
+                    if not df_ativos_setor.empty:
+                        metrica = var_col_setor or taxa_col
+                        df_ativos_setor[metrica] = pd.to_numeric(df_ativos_setor[metrica], errors="coerce")
+                        df_ativos_setor = (
+                            df_ativos_setor
+                            .dropna(subset=[metrica])
+                            .sort_values(metrica, ascending=False)
+                            .head(10)
+                        )
+
+                        st.markdown(
+                            f'<div class="panel-header"><div class="panel-title">Ativos do setor: {setor_clicado}</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        fig_ativos_setor = px.bar(
+                            df_ativos_setor,
+                            x=metrica,
+                            y=cod_col_setor,
+                            orientation="h",
+                            text=metrica,
+                            labels={metrica: "", cod_col_setor: ""},
+                        )
+                        fig_ativos_setor.update_traces(marker_color="#175cd3", texttemplate="%{text:.2f}", textposition="outside")
+                        fig_ativos_setor.update_layout(yaxis=dict(autorange="reversed"), margin=dict(l=6, r=36, t=8, b=22))
+                        fig_ativos_setor = plotly_base(fig_ativos_setor, height=245, showlegend=False)
+                        st.plotly_chart(fig_ativos_setor, use_container_width=True)
             else:
                 st.info("Preencher setor na base para habilitar esta visão.")
         with b2:
